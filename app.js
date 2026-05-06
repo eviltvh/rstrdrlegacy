@@ -6,8 +6,8 @@
 // El self se detecta auto: el usuario cuyo origen literal es 'self'.
 // Si querés forzar otro id como centro, ponelo aquí (string), si no, null.
 const SELF_OVERRIDE = null;
-const RING_BASE = 180;          // distancia del primer anillo (lvl 1)
-const RING_GROWTH = 5.0;        // 1.0 = anillos lineales; >1 = se expanden
+const RING_BASE = 220;          // distancia del primer anillo (lvl 1)
+const RING_GROWTH = 80.0;        // 1.0 = anillos lineales; >1 = se expanden
 
 // ════════════════════════════════════════════════════════════
 //  STATE
