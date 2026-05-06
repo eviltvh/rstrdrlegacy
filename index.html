@@ -1,0 +1,1477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>POLPO :: NETWORK ANALYZER</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --bg-alt: #111;
+    --fg: #f5f5f5;
+    --muted: #666;
+    --dim: #2a2a2a;
+    --accent: #E8FF00;
+    --accent-dim: #818d00;
+    --pink: #FF00B3;
+    --node-active: #f5f5f5;
+    --node-mutual: #E8FF00;
+    --node-unfollowed: #444;
+    --node-ghost: transparent;
+    --node-self: #FF00B3;
+    --link: #2a2a2a;
+    --link-highlight: #E8FF00;
+    --link-path: #FF00B3;
+    --serif: 'EB Garamond', serif;
+    --mono: 'JetBrains Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  /* ========== EMPTY STATE / DROPZONE ========== */
+  .empty-state {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    z-index: 10;
+    background: var(--bg);
+  }
+  .empty-state.hidden { display: none; }
+
+  .empty-state h1 {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 500;
+    font-size: clamp(60px, 10vw, 140px);
+    line-height: 0.9;
+    letter-spacing: -0.04em;
+    margin-bottom: 8px;
+  }
+  .empty-state h1 em {
+    color: var(--accent);
+    font-style: italic;
+  }
+  .empty-state .subtitle {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    margin-bottom: 60px;
+  }
+
+  .dropzone {
+    border: 2px solid var(--fg);
+    padding: 60px 80px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    background: var(--bg);
+    box-shadow: 8px 8px 0 var(--accent);
+    user-select: none;
+    max-width: 640px;
+    width: 100%;
+  }
+  .dropzone:hover, .dropzone.drag {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: 12px 12px 0 var(--fg);
+    transform: translate(-2px, -2px);
+  }
+  .dropzone-label {
+    font-family: var(--serif);
+    font-size: 32px;
+    font-style: italic;
+    font-weight: 500;
+    margin-bottom: 12px;
+  }
+  .dropzone-hint {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+  }
+  .dropzone:hover .dropzone-hint, .dropzone.drag .dropzone-hint {
+    color: var(--bg);
+  }
+
+  .empty-footer {
+    position: absolute;
+    bottom: 24px;
+    left: 24px;
+    right: 24px;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+  }
+
+  /* ========== APP LAYOUT ========== */
+  .app {
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    height: 100vh;
+    width: 100vw;
+  }
+  .app.hidden { display: none; }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--dim);
+    background: var(--bg);
+  }
+  header .brand {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+  header .brand em { color: var(--accent); }
+  header .meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    display: flex;
+    gap: 16px;
+  }
+  header .meta button {
+    background: none;
+    border: 1px solid var(--dim);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: inherit;
+    padding: 4px 10px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+  header .meta button:hover {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+
+  /* ========== STATS BAR ========== */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    border-bottom: 1px solid var(--dim);
+    background: var(--bg-alt);
+  }
+  .stat {
+    padding: 10px 14px;
+    border-right: 1px solid var(--dim);
+  }
+  .stat:last-child { border-right: none; }
+  .stat-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1;
+  }
+  .stat-value.accent { color: var(--accent); }
+
+  /* ========== MAIN GRID ========== */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    overflow: hidden;
+  }
+
+  .graph-container {
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 50% 50%, #141414 0%, #050505 100%);
+  }
+
+  .graph-toolbar {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    display: flex;
+    gap: 6px;
+    z-index: 5;
+  }
+  .graph-toolbar button {
+    background: var(--bg);
+    border: 1px solid var(--dim);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 6px 10px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+  .graph-toolbar button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .graph-toolbar button.active {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+
+  .graph-legend {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    background: var(--bg);
+    border: 1px solid var(--dim);
+    padding: 10px 12px;
+    font-size: 10px;
+    z-index: 5;
+  }
+  .legend-title {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 3px;
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid var(--fg);
+  }
+
+  svg.graph {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    display: block;
+  }
+  svg.graph:active { cursor: grabbing; }
+
+  .node circle {
+    cursor: pointer;
+    transition: stroke-width 0.15s;
+  }
+  .node:hover circle {
+    stroke-width: 3px;
+  }
+  .node text {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--fg);
+    pointer-events: none;
+    text-anchor: middle;
+    user-select: none;
+  }
+  .node.dim { opacity: 0.15; }
+  .node.highlight circle {
+    stroke: var(--accent) !important;
+    stroke-width: 3px !important;
+  }
+  .node.path circle {
+    stroke: var(--pink) !important;
+    stroke-width: 4px !important;
+  }
+  .node.selected circle {
+    stroke: var(--accent) !important;
+    stroke-width: 4px !important;
+    filter: drop-shadow(0 0 8px var(--accent));
+  }
+
+  .link {
+    stroke: var(--link);
+    stroke-width: 1px;
+    fill: none;
+    transition: stroke 0.2s, stroke-width 0.2s;
+  }
+  .link.dim { opacity: 0.05; }
+  .link.highlight {
+    stroke: var(--link-highlight);
+    stroke-width: 2px;
+    opacity: 1;
+  }
+  .link.path {
+    stroke: var(--link-path);
+    stroke-width: 3px;
+    opacity: 1;
+  }
+
+  /* ========== SIDEBAR ========== */
+  aside.sidebar {
+    border-left: 1px solid var(--dim);
+    overflow-y: auto;
+    background: var(--bg);
+  }
+  aside.sidebar::-webkit-scrollbar { width: 6px; }
+  aside.sidebar::-webkit-scrollbar-track { background: var(--bg); }
+  aside.sidebar::-webkit-scrollbar-thumb { background: var(--dim); }
+
+  .panel {
+    border-bottom: 1px solid var(--dim);
+    padding: 14px 16px;
+  }
+  .panel-title {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+    color: var(--muted);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .panel-title::before {
+    content: '[';
+    color: var(--accent);
+  }
+  .panel-title::after {
+    content: ']';
+    color: var(--accent);
+  }
+
+  .input {
+    width: 100%;
+    background: var(--bg-alt);
+    border: 1px solid var(--dim);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .input:focus {
+    border-color: var(--accent);
+  }
+  .input::placeholder {
+    color: var(--muted);
+  }
+
+  .btn {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--fg);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 8px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    transition: all 0.1s;
+    box-shadow: 3px 3px 0 var(--accent);
+  }
+  .btn:hover {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: 5px 5px 0 var(--fg);
+    transform: translate(-1px, -1px);
+  }
+  .btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--fg); }
+  .btn.secondary { box-shadow: 3px 3px 0 var(--dim); }
+  .btn.secondary:hover { box-shadow: 5px 5px 0 var(--accent); }
+
+  .row { display: flex; gap: 6px; }
+  .row > * { flex: 1; }
+  .stack > * + * { margin-top: 8px; }
+
+  /* Search results */
+  .search-results {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 8px;
+  }
+  .search-results::-webkit-scrollbar { width: 4px; }
+  .search-results::-webkit-scrollbar-thumb { background: var(--dim); }
+  .search-result {
+    padding: 6px 10px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    font-size: 11px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .search-result:hover {
+    background: var(--bg-alt);
+    border-left-color: var(--accent);
+  }
+  .search-result .badge {
+    font-size: 8px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+
+  /* Selected node info */
+  .node-info-empty {
+    color: var(--muted);
+    font-size: 10px;
+    font-style: italic;
+    text-align: center;
+    padding: 16px 0;
+  }
+  .node-info dl {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 10px;
+    font-size: 10px;
+  }
+  .node-info dt {
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 9px;
+  }
+  .node-info dd {
+    color: var(--fg);
+    word-break: break-word;
+  }
+  .node-info dd.accent { color: var(--accent); }
+  .node-info dd.pink { color: var(--pink); }
+  .node-info-name {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 22px;
+    font-weight: 500;
+    margin-bottom: 8px;
+    line-height: 1.1;
+    word-break: break-all;
+  }
+  .node-info-name::before { content: '@'; color: var(--accent); }
+  .neighbors {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--dim);
+  }
+  .neighbors-title {
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .neighbor-chip {
+    display: inline-block;
+    background: var(--bg-alt);
+    border: 1px solid var(--dim);
+    padding: 2px 6px;
+    margin: 0 3px 3px 0;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .neighbor-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .neighbor-chip.in { border-left: 2px solid var(--accent); }
+  .neighbor-chip.out { border-right: 2px solid var(--pink); }
+
+  /* Path result */
+  .path-result {
+    margin-top: 10px;
+    font-size: 10px;
+  }
+  .path-empty { color: var(--muted); font-style: italic; text-align: center; padding: 8px 0; font-size: 10px; }
+  .path-success {
+    color: var(--accent);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 8px;
+  }
+  .path-fail {
+    color: var(--pink);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+  .path-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+  .path-step:hover { color: var(--accent); }
+  .path-step .num {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 16px;
+    color: var(--accent);
+    width: 20px;
+    text-align: center;
+  }
+  .path-arrow {
+    color: var(--muted);
+    margin-left: 28px;
+    font-size: 10px;
+  }
+
+  /* Tooltip */
+  .tooltip {
+    position: absolute;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    padding: 6px 10px;
+    font-size: 10px;
+    pointer-events: none;
+    z-index: 100;
+    box-shadow: 4px 4px 0 var(--dim);
+    display: none;
+  }
+  .tooltip.show { display: block; }
+  .tooltip-name {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+
+  /* Filter chips */
+  .filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .chip {
+    background: var(--bg-alt);
+    border: 1px solid var(--dim);
+    padding: 4px 8px;
+    font-size: 9px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    user-select: none;
+  }
+  .chip.active {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+
+  /* error toast */
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--pink);
+    color: var(--bg);
+    padding: 10px 20px;
+    border: 2px solid var(--fg);
+    box-shadow: 6px 6px 0 var(--fg);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    z-index: 1000;
+    display: none;
+  }
+  .toast.show { display: block; }
+
+  /* responsive collapse */
+  @media (max-width: 800px) {
+    .main-grid { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    aside.sidebar { max-height: 50vh; border-left: none; border-top: 1px solid var(--dim); }
+    .stats { grid-template-columns: repeat(3, 1fr); }
+    .stat:nth-child(3) { border-right: none; }
+    .stat:nth-child(n+4) { border-top: 1px solid var(--dim); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════ EMPTY STATE / DROPZONE ════════ -->
+<div class="empty-state" id="emptyState">
+  <h1>POLPO <em>/ network</em></h1>
+  <div class="subtitle">[ origin → user connection analyzer ]</div>
+  <div class="dropzone" id="dropzone">
+    <div class="dropzone-label">drop your CSV</div>
+    <div class="dropzone-hint">or click to select · stand_users export</div>
+    <input type="file" id="fileInput" accept=".csv" hidden>
+  </div>
+  <div class="empty-footer">
+    <span>SNCTVM // -bynd</span>
+    <span>POLPO :: NETWORK v1</span>
+  </div>
+</div>
+
+<!-- ════════ APP ════════ -->
+<div class="app hidden" id="app">
+
+  <header>
+    <div class="brand">POLPO <em>/ network</em></div>
+    <div class="meta">
+      <span id="metaFile">—</span>
+      <button id="reloadBtn">RELOAD CSV</button>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Nodes</div><div class="stat-value" id="statNodes">0</div></div>
+    <div class="stat"><div class="stat-label">Edges</div><div class="stat-value" id="statEdges">0</div></div>
+    <div class="stat"><div class="stat-label">Mutuals</div><div class="stat-value accent" id="statMutuals">0</div></div>
+    <div class="stat"><div class="stat-label">Origins</div><div class="stat-value" id="statOrigins">0</div></div>
+    <div class="stat"><div class="stat-label">Components</div><div class="stat-value" id="statComponents">0</div></div>
+    <div class="stat"><div class="stat-label">Avg Degree</div><div class="stat-value" id="statDegree">0</div></div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- ═══ GRAPH ═══ -->
+    <div class="graph-container">
+      <div class="graph-toolbar">
+        <button id="resetBtn">RESET VIEW</button>
+        <button id="freezeBtn">FREEZE</button>
+        <button id="labelsBtn" class="active">LABELS</button>
+      </div>
+      <svg class="graph" id="graph"></svg>
+      <div class="graph-legend">
+        <div class="legend-title">Legend</div>
+        <div class="legend-row"><span class="legend-dot" style="background:var(--node-mutual)"></span>mutual</div>
+        <div class="legend-row"><span class="legend-dot" style="background:var(--node-active)"></span>active</div>
+        <div class="legend-row"><span class="legend-dot" style="background:var(--node-unfollowed)"></span>unfollowed</div>
+        <div class="legend-row"><span class="legend-dot" style="background:var(--bg);border-style:dashed"></span>origin (ghost)</div>
+      </div>
+    </div>
+
+    <!-- ═══ SIDEBAR ═══ -->
+    <aside class="sidebar">
+
+      <div class="panel">
+        <div class="panel-title">search</div>
+        <div class="stack">
+          <input type="text" class="input" id="searchInput" placeholder="username..." />
+          <div class="filter-chips">
+            <span class="chip active" data-filter="all">all</span>
+            <span class="chip" data-filter="mutual">mutuals</span>
+            <span class="chip" data-filter="active">active</span>
+            <span class="chip" data-filter="unfollowed">unfollowed</span>
+            <span class="chip" data-filter="origin">origins</span>
+          </div>
+          <div class="search-results" id="searchResults"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">connect / shortest path</div>
+        <div class="stack">
+          <div class="row">
+            <input type="text" class="input" id="pathFrom" placeholder="from..." />
+            <input type="text" class="input" id="pathTo" placeholder="to..." />
+          </div>
+          <div class="row">
+            <button class="btn" id="pathBtn">TRACE PATH</button>
+            <button class="btn secondary" id="pathClearBtn">CLEAR</button>
+          </div>
+          <div class="path-result" id="pathResult">
+            <div class="path-empty">enter two usernames to find connection</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">selected node</div>
+        <div class="node-info" id="nodeInfo">
+          <div class="node-info-empty">click any node in the graph</div>
+        </div>
+      </div>
+
+    </aside>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+// ════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════
+const state = {
+  nodes: [],          // [{id, ...attrs}]
+  links: [],          // [{source, target}]
+  nodeMap: new Map(), // id -> node
+  adj: new Map(),     // id -> Set<id>  (undirected for BFS)
+  outAdj: new Map(),  // id -> Set<id>  (origen -> follower; outgoing)
+  inAdj: new Map(),   // id -> Set<id>  (incoming, the user's origen)
+  filter: 'all',
+  selectedId: null,
+  pathIds: new Set(),
+  showLabels: true,
+  frozen: false,
+};
+
+// ════════════════════════════════════════════════════════════
+//  CSV PARSER (handles quoted fields)
+// ════════════════════════════════════════════════════════════
+function parseCSV(text) {
+  const lines = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      if (inQuotes && text[i+1] === '"') { cur += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (c === '\n' && !inQuotes) {
+      lines.push(cur); cur = '';
+    } else if (c === '\r' && !inQuotes) {
+      // skip
+    } else {
+      cur += c;
+    }
+  }
+  if (cur) lines.push(cur);
+
+  const parseLine = (line) => {
+    const out = []; let f = ''; let q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') {
+        if (q && line[i+1] === '"') { f += '"'; i++; }
+        else q = !q;
+      } else if (c === ',' && !q) { out.push(f); f = ''; }
+      else f += c;
+    }
+    out.push(f);
+    return out;
+  };
+
+  if (!lines.length) return { headers: [], rows: [] };
+  const headers = parseLine(lines[0]).map(h => h.trim());
+  const rows = lines.slice(1)
+    .filter(l => l.trim())
+    .map(l => {
+      const vals = parseLine(l);
+      const obj = {};
+      headers.forEach((h, i) => obj[h] = (vals[i] ?? '').trim());
+      return obj;
+    });
+  return { headers, rows };
+}
+
+// ════════════════════════════════════════════════════════════
+//  BUILD GRAPH FROM CSV ROWS
+// ════════════════════════════════════════════════════════════
+function buildGraph(rows) {
+  const nodeMap = new Map();
+
+  const ensureNode = (id, isGhost = false) => {
+    if (!id) return null;
+    if (!nodeMap.has(id)) {
+      nodeMap.set(id, {
+        id,
+        username: id,
+        ghost: isGhost,           // tiene edges pero no datos propios
+        status: isGhost ? 'origin' : 'unknown',
+        mutual: false,
+        origen: '',
+        followed_at: '',
+        mutual_checked_at: '',
+        profile_followers: '',
+        profile_following: '',
+        profile_ratio: '',
+        stand_type: '',
+        days_active: '',
+      });
+    } else if (!isGhost) {
+      // upgrade: el nodo aparece como user real, ya no es ghost
+      nodeMap.get(id).ghost = false;
+    }
+    return nodeMap.get(id);
+  };
+
+  const links = [];
+  rows.forEach(row => {
+    const u = (row.username || '').trim();
+    if (!u) return;
+    const node = ensureNode(u, false);
+    Object.assign(node, {
+      followed_at: row.followed_at || '',
+      status: (row.status || 'unknown').toLowerCase(),
+      mutual: String(row.mutual || '').toLowerCase() === 'true',
+      mutual_checked_at: row.mutual_checked_at || '',
+      origen: (row.origen || '').trim(),
+      profile_followers: row.profile_followers || '',
+      profile_following: row.profile_following || '',
+      profile_ratio: row.profile_ratio || '',
+      stand_type: row.stand_type || '',
+      days_active: row.days_active || '',
+    });
+
+    const o = node.origen;
+    if (o && o.toLowerCase() !== 'unknown' && o !== u) {
+      ensureNode(o, true);  // si nunca aparece como username será ghost
+      links.push({ source: o, target: u });
+    }
+  });
+
+  // dedupe edges (por si)
+  const seen = new Set();
+  const dedup = [];
+  links.forEach(l => {
+    const k = `${l.source}|${l.target}`;
+    if (!seen.has(k)) { seen.add(k); dedup.push(l); }
+  });
+
+  return { nodes: Array.from(nodeMap.values()), links: dedup };
+}
+
+// ════════════════════════════════════════════════════════════
+//  ADJACENCY + STATS
+// ════════════════════════════════════════════════════════════
+function indexGraph(nodes, links) {
+  const adj = new Map();      // undirected
+  const outAdj = new Map();   // origen -> targets
+  const inAdj = new Map();    // user -> origenes
+  const nodeMap = new Map();
+  nodes.forEach(n => {
+    adj.set(n.id, new Set());
+    outAdj.set(n.id, new Set());
+    inAdj.set(n.id, new Set());
+    nodeMap.set(n.id, n);
+  });
+  links.forEach(l => {
+    const s = typeof l.source === 'object' ? l.source.id : l.source;
+    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    adj.get(s)?.add(t);
+    adj.get(t)?.add(s);
+    outAdj.get(s)?.add(t);
+    inAdj.get(t)?.add(s);
+  });
+  return { adj, outAdj, inAdj, nodeMap };
+}
+
+function connectedComponents(nodes, adj) {
+  const seen = new Set();
+  let count = 0;
+  for (const n of nodes) {
+    if (seen.has(n.id)) continue;
+    count++;
+    const stack = [n.id];
+    while (stack.length) {
+      const x = stack.pop();
+      if (seen.has(x)) continue;
+      seen.add(x);
+      adj.get(x)?.forEach(y => { if (!seen.has(y)) stack.push(y); });
+    }
+  }
+  return count;
+}
+
+// ════════════════════════════════════════════════════════════
+//  BFS SHORTEST PATH (undirected, unweighted)
+// ════════════════════════════════════════════════════════════
+function shortestPath(adj, fromId, toId) {
+  if (!adj.has(fromId) || !adj.has(toId)) return null;
+  if (fromId === toId) return [fromId];
+  const prev = new Map();
+  const queue = [fromId];
+  prev.set(fromId, null);
+  while (queue.length) {
+    const cur = queue.shift();
+    if (cur === toId) {
+      const path = [];
+      let x = cur;
+      while (x !== null) { path.unshift(x); x = prev.get(x); }
+      return path;
+    }
+    adj.get(cur)?.forEach(nb => {
+      if (!prev.has(nb)) {
+        prev.set(nb, cur);
+        queue.push(nb);
+      }
+    });
+  }
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════
+//  D3 RENDERING
+// ════════════════════════════════════════════════════════════
+let svg, gZoom, gLinks, gNodes, simulation, zoomBehavior;
+
+function initSvg() {
+  svg = d3.select('#graph');
+  svg.selectAll('*').remove();
+
+  // arrow marker
+  const defs = svg.append('defs');
+  defs.append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 -5 10 10')
+    .attr('refX', 14)
+    .attr('refY', 0)
+    .attr('markerWidth', 6)
+    .attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,-5L10,0L0,5')
+    .attr('fill', '#444');
+  defs.append('marker')
+    .attr('id', 'arrow-hl')
+    .attr('viewBox', '0 -5 10 10')
+    .attr('refX', 14).attr('refY', 0)
+    .attr('markerWidth', 6).attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,-5L10,0L0,5')
+    .attr('fill', '#E8FF00');
+  defs.append('marker')
+    .attr('id', 'arrow-path')
+    .attr('viewBox', '0 -5 10 10')
+    .attr('refX', 14).attr('refY', 0)
+    .attr('markerWidth', 6).attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,-5L10,0L0,5')
+    .attr('fill', '#FF00B3');
+
+  gZoom = svg.append('g').attr('class', 'zoom-layer');
+  gLinks = gZoom.append('g').attr('class', 'links');
+  gNodes = gZoom.append('g').attr('class', 'nodes');
+
+  zoomBehavior = d3.zoom()
+    .scaleExtent([0.1, 8])
+    .on('zoom', (e) => gZoom.attr('transform', e.transform));
+  svg.call(zoomBehavior);
+}
+
+function nodeColor(d) {
+  if (d.ghost) return 'transparent';
+  if (d.mutual) return '#E8FF00';
+  if (d.status === 'unfollowed') return '#444';
+  if (d.status === 'origin') return 'transparent';
+  return '#f5f5f5';
+}
+function nodeStroke(d) {
+  if (d.ghost) return '#666';
+  if (d.mutual) return '#E8FF00';
+  if (d.status === 'unfollowed') return '#444';
+  return '#f5f5f5';
+}
+function nodeRadius(d) {
+  // size by degree
+  const deg = state.adj.get(d.id)?.size || 1;
+  return Math.min(12, 4 + Math.sqrt(deg) * 1.5);
+}
+
+function render() {
+  const { width, height } = svg.node().getBoundingClientRect();
+
+  // ── LINKS ──
+  const linkSel = gLinks.selectAll('line.link')
+    .data(state.links, d => `${(d.source.id||d.source)}|${(d.target.id||d.target)}`);
+  linkSel.exit().remove();
+  const linkEnter = linkSel.enter().append('line')
+    .attr('class', 'link')
+    .attr('marker-end', 'url(#arrow)');
+  const allLinks = linkEnter.merge(linkSel);
+
+  // ── NODES ──
+  const nodeSel = gNodes.selectAll('g.node').data(state.nodes, d => d.id);
+  nodeSel.exit().remove();
+  const nodeEnter = nodeSel.enter().append('g').attr('class', 'node');
+  nodeEnter.append('circle');
+  nodeEnter.append('text').attr('dy', 18);
+  const allNodes = nodeEnter.merge(nodeSel);
+
+  allNodes.select('circle')
+    .attr('r', nodeRadius)
+    .attr('fill', nodeColor)
+    .attr('stroke', nodeStroke)
+    .attr('stroke-width', 1.5)
+    .attr('stroke-dasharray', d => d.ghost ? '2,2' : null);
+  allNodes.select('text')
+    .text(d => d.id)
+    .style('display', state.showLabels ? null : 'none');
+
+  allNodes
+    .on('click', (e, d) => { e.stopPropagation(); selectNode(d.id); })
+    .on('mouseenter', (e, d) => showTooltip(e, d))
+    .on('mousemove', moveTooltip)
+    .on('mouseleave', hideTooltip)
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); if (!state.frozen) { d.fx = null; d.fy = null; } }));
+
+  // ── SIMULATION ──
+  if (simulation) simulation.stop();
+  simulation = d3.forceSimulation(state.nodes)
+    .force('link', d3.forceLink(state.links).id(d => d.id).distance(60).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(-180))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collide', d3.forceCollide().radius(d => nodeRadius(d) + 6))
+    .alpha(1)
+    .alphaDecay(0.025);
+
+  simulation.on('tick', () => {
+    allLinks
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    allNodes.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  svg.on('click', () => selectNode(null));
+}
+
+function applyHighlights() {
+  const sel = state.selectedId;
+  const path = state.pathIds;
+  const filter = state.filter;
+  const search = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+
+  gNodes.selectAll('g.node').each(function(d) {
+    const el = d3.select(this);
+    let dim = false;
+    let highlight = false;
+
+    // filter
+    if (filter !== 'all') {
+      if (filter === 'mutual' && !d.mutual) dim = true;
+      else if (filter === 'active' && d.status !== 'active') dim = true;
+      else if (filter === 'unfollowed' && d.status !== 'unfollowed') dim = true;
+      else if (filter === 'origin' && !d.ghost && state.outAdj.get(d.id)?.size === 0) dim = true;
+    }
+    // search
+    if (search && !d.id.toLowerCase().includes(search)) dim = true;
+
+    // selected & neighbors override dim
+    if (sel) {
+      const neighbors = state.adj.get(sel) || new Set();
+      if (d.id === sel || neighbors.has(d.id)) { dim = false; highlight = (d.id !== sel); }
+      else dim = true;
+    }
+    // path overrides everything
+    const inPath = path.has(d.id);
+    if (inPath) dim = false;
+
+    el.classed('dim', dim);
+    el.classed('highlight', highlight && !inPath);
+    el.classed('selected', d.id === sel && !inPath);
+    el.classed('path', inPath);
+  });
+
+  gLinks.selectAll('line.link').each(function(d) {
+    const el = d3.select(this);
+    const sId = d.source.id || d.source;
+    const tId = d.target.id || d.target;
+    let dim = false;
+    let highlight = false;
+    let inPath = false;
+
+    // path
+    if (path.size > 1) {
+      const arr = Array.from(path);
+      // path is ordered set? we keep it ordered separately:
+      const ordered = state.pathOrdered || [];
+      for (let i = 0; i < ordered.length - 1; i++) {
+        const a = ordered[i], b = ordered[i+1];
+        if ((sId === a && tId === b) || (sId === b && tId === a)) { inPath = true; break; }
+      }
+    }
+
+    if (sel) {
+      if (sId === sel || tId === sel) highlight = true;
+      else dim = true;
+    }
+    if (filter !== 'all' || search) {
+      const sNode = state.nodeMap.get(sId);
+      const tNode = state.nodeMap.get(tId);
+      const sDim = d3.select(gNodes.selectAll('g.node').filter(n => n.id === sId).node()).classed('dim');
+      const tDim = d3.select(gNodes.selectAll('g.node').filter(n => n.id === tId).node()).classed('dim');
+      if (sDim || tDim) dim = true;
+    }
+    if (inPath) { dim = false; highlight = false; }
+
+    el.classed('dim', dim);
+    el.classed('highlight', highlight && !inPath);
+    el.classed('path', inPath);
+    el.attr('marker-end', inPath ? 'url(#arrow-path)' : (highlight ? 'url(#arrow-hl)' : 'url(#arrow)'));
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  TOOLTIP
+// ════════════════════════════════════════════════════════════
+const tooltipEl = document.getElementById('tooltip');
+function showTooltip(e, d) {
+  const inDeg = state.inAdj.get(d.id)?.size || 0;
+  const outDeg = state.outAdj.get(d.id)?.size || 0;
+  tooltipEl.innerHTML = `
+    <div class="tooltip-name">@${d.id}</div>
+    <div>${d.ghost ? '[ origin only ]' : (d.status || '—')}${d.mutual ? ' · mutual' : ''}</div>
+    <div style="color:var(--muted);margin-top:2px;">in ${inDeg} · out ${outDeg}</div>
+  `;
+  tooltipEl.classList.add('show');
+  moveTooltip(e);
+}
+function moveTooltip(e) {
+  tooltipEl.style.left = (e.pageX + 14) + 'px';
+  tooltipEl.style.top = (e.pageY + 14) + 'px';
+}
+function hideTooltip() { tooltipEl.classList.remove('show'); }
+
+// ════════════════════════════════════════════════════════════
+//  SELECT NODE
+// ════════════════════════════════════════════════════════════
+function selectNode(id) {
+  state.selectedId = id;
+  renderNodeInfo();
+  applyHighlights();
+}
+
+function renderNodeInfo() {
+  const box = document.getElementById('nodeInfo');
+  if (!state.selectedId) {
+    box.innerHTML = '<div class="node-info-empty">click any node in the graph</div>';
+    return;
+  }
+  const d = state.nodeMap.get(state.selectedId);
+  if (!d) { box.innerHTML = '<div class="node-info-empty">node not found</div>'; return; }
+
+  const ins = Array.from(state.inAdj.get(d.id) || []);
+  const outs = Array.from(state.outAdj.get(d.id) || []);
+
+  let html = `<div class="node-info-name">${d.id}</div>`;
+  html += '<dl>';
+  if (d.ghost) {
+    html += `<dt>type</dt><dd class="accent">origin only</dd>`;
+    html += `<dt>incoming</dt><dd>${ins.length}</dd>`;
+    html += `<dt>spawned</dt><dd class="accent">${outs.length}</dd>`;
+  } else {
+    html += `<dt>status</dt><dd class="${d.status==='active'?'accent':''}">${d.status||'—'}</dd>`;
+    html += `<dt>mutual</dt><dd class="${d.mutual?'accent':''}">${d.mutual?'yes':'no'}</dd>`;
+    html += `<dt>origen</dt><dd class="pink">${d.origen||'—'}</dd>`;
+    if (d.followed_at) html += `<dt>followed</dt><dd>${(d.followed_at||'').slice(0,10)}</dd>`;
+    if (d.days_active !== '') html += `<dt>days</dt><dd>${d.days_active}</dd>`;
+    if (d.profile_followers) html += `<dt>followers</dt><dd>${d.profile_followers}</dd>`;
+    if (d.profile_following) html += `<dt>following</dt><dd>${d.profile_following}</dd>`;
+    if (d.profile_ratio) html += `<dt>ratio</dt><dd>${d.profile_ratio}</dd>`;
+    if (d.stand_type) html += `<dt>type</dt><dd>${d.stand_type}</dd>`;
+    html += `<dt>incoming</dt><dd>${ins.length}</dd>`;
+    html += `<dt>outgoing</dt><dd class="accent">${outs.length}</dd>`;
+  }
+  html += '</dl>';
+
+  if (ins.length || outs.length) {
+    html += '<div class="neighbors">';
+    if (ins.length) {
+      html += '<div class="neighbors-title">← incoming (origenes)</div>';
+      ins.slice(0, 30).forEach(n => html += `<span class="neighbor-chip in" data-jump="${n}">@${n}</span>`);
+      if (ins.length > 30) html += `<span class="neighbor-chip">+${ins.length-30}</span>`;
+    }
+    if (outs.length) {
+      html += '<div class="neighbors-title" style="margin-top:8px;">→ outgoing (spawned)</div>';
+      outs.slice(0, 30).forEach(n => html += `<span class="neighbor-chip out" data-jump="${n}">@${n}</span>`);
+      if (outs.length > 30) html += `<span class="neighbor-chip">+${outs.length-30}</span>`;
+    }
+    html += '</div>';
+  }
+
+  box.innerHTML = html;
+  box.querySelectorAll('[data-jump]').forEach(el => {
+    el.addEventListener('click', () => selectNode(el.getAttribute('data-jump')));
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  SEARCH
+// ════════════════════════════════════════════════════════════
+function runSearch() {
+  const q = document.getElementById('searchInput').value.toLowerCase().trim();
+  const box = document.getElementById('searchResults');
+  if (!q) { box.innerHTML = ''; applyHighlights(); return; }
+
+  const filter = state.filter;
+  const matches = state.nodes.filter(n => {
+    if (!n.id.toLowerCase().includes(q)) return false;
+    if (filter === 'mutual') return n.mutual;
+    if (filter === 'active') return n.status === 'active';
+    if (filter === 'unfollowed') return n.status === 'unfollowed';
+    if (filter === 'origin') return n.ghost || (state.outAdj.get(n.id)?.size > 0);
+    return true;
+  }).slice(0, 50);
+
+  box.innerHTML = matches.map(n => {
+    const tag = n.ghost ? 'origin' : (n.mutual ? 'mutual' : (n.status||'—'));
+    return `<div class="search-result" data-id="${n.id}">
+      <span>@${n.id}</span><span class="badge">${tag}</span>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.search-result').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.getAttribute('data-id');
+      selectNode(id);
+      focusNode(id);
+    });
+  });
+  applyHighlights();
+}
+
+function focusNode(id) {
+  const n = state.nodeMap.get(id);
+  if (!n || n.x == null) return;
+  const { width, height } = svg.node().getBoundingClientRect();
+  const k = 1.6;
+  const t = d3.zoomIdentity.translate(width/2 - n.x*k, height/2 - n.y*k).scale(k);
+  svg.transition().duration(500).call(zoomBehavior.transform, t);
+}
+
+// ════════════════════════════════════════════════════════════
+//  PATH FINDING
+// ════════════════════════════════════════════════════════════
+function tracePath() {
+  const fromId = document.getElementById('pathFrom').value.trim();
+  const toId   = document.getElementById('pathTo').value.trim();
+  const out = document.getElementById('pathResult');
+
+  if (!fromId || !toId) {
+    out.innerHTML = '<div class="path-empty">enter two usernames to find connection</div>';
+    return;
+  }
+  if (!state.nodeMap.has(fromId)) { out.innerHTML = `<div class="path-fail">@${fromId} not in graph</div>`; return; }
+  if (!state.nodeMap.has(toId))   { out.innerHTML = `<div class="path-fail">@${toId} not in graph</div>`; return; }
+
+  const path = shortestPath(state.adj, fromId, toId);
+  if (!path) {
+    out.innerHTML = `<div class="path-fail">no path · disconnected</div>`;
+    state.pathIds = new Set();
+    state.pathOrdered = [];
+    applyHighlights();
+    return;
+  }
+
+  state.pathIds = new Set(path);
+  state.pathOrdered = path;
+
+  const hops = path.length - 1;
+  let html = `<div class="path-success">${hops} hop${hops!==1?'s':''} · ${path.length} nodes</div>`;
+  path.forEach((id, i) => {
+    html += `<div class="path-step" data-id="${id}">
+      <span class="num">${String(i+1).padStart(2,'0')}</span><span>@${id}</span>
+    </div>`;
+    if (i < path.length - 1) {
+      // direction indicator (origen → user, or reverse)
+      const a = path[i], b = path[i+1];
+      const forward = state.outAdj.get(a)?.has(b);
+      html += `<div class="path-arrow">${forward ? '↓ spawned' : '↑ origen of'}</div>`;
+    }
+  });
+  out.innerHTML = html;
+  out.querySelectorAll('.path-step').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.getAttribute('data-id');
+      selectNode(id);
+      focusNode(id);
+    });
+  });
+  applyHighlights();
+}
+
+function clearPath() {
+  document.getElementById('pathFrom').value = '';
+  document.getElementById('pathTo').value = '';
+  state.pathIds = new Set();
+  state.pathOrdered = [];
+  document.getElementById('pathResult').innerHTML = '<div class="path-empty">enter two usernames to find connection</div>';
+  applyHighlights();
+}
+
+// ════════════════════════════════════════════════════════════
+//  STATS RENDERING
+// ════════════════════════════════════════════════════════════
+function renderStats() {
+  document.getElementById('statNodes').textContent = state.nodes.length;
+  document.getElementById('statEdges').textContent = state.links.length;
+  const mutuals = state.nodes.filter(n => n.mutual).length;
+  document.getElementById('statMutuals').textContent = mutuals;
+  let originCount = 0;
+  state.outAdj.forEach((s, id) => { if (s.size > 0) originCount++; });
+  document.getElementById('statOrigins').textContent = originCount;
+  document.getElementById('statComponents').textContent = connectedComponents(state.nodes, state.adj);
+  const avgDeg = state.nodes.length ? (2 * state.links.length / state.nodes.length).toFixed(2) : 0;
+  document.getElementById('statDegree').textContent = avgDeg;
+}
+
+// ════════════════════════════════════════════════════════════
+//  LOAD CSV
+// ════════════════════════════════════════════════════════════
+function loadCSVText(text, filename) {
+  try {
+    const parsed = parseCSV(text);
+    if (!parsed.headers.includes('username')) {
+      toast('CSV missing "username" column');
+      return;
+    }
+    const { nodes, links } = buildGraph(parsed.rows);
+    if (!nodes.length) { toast('no nodes parsed'); return; }
+
+    state.nodes = nodes;
+    state.links = links;
+    const idx = indexGraph(nodes, links);
+    state.adj = idx.adj;
+    state.outAdj = idx.outAdj;
+    state.inAdj = idx.inAdj;
+    state.nodeMap = idx.nodeMap;
+    state.selectedId = null;
+    state.pathIds = new Set();
+    state.pathOrdered = [];
+
+    document.getElementById('emptyState').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    document.getElementById('metaFile').textContent = filename || 'csv loaded';
+
+    initSvg();
+    render();
+    renderStats();
+    renderNodeInfo();
+    runSearch();
+    setTimeout(applyHighlights, 100);
+  } catch (err) {
+    console.error(err);
+    toast('error parsing CSV: ' + err.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  TOAST
+// ════════════════════════════════════════════════════════════
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// ════════════════════════════════════════════════════════════
+//  EVENT WIRING
+// ════════════════════════════════════════════════════════════
+function setupEvents() {
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    f.text().then(t => loadCSVText(t, f.name));
+  });
+
+  ['dragenter', 'dragover'].forEach(ev =>
+    dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach(ev =>
+    dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+  dropzone.addEventListener('drop', e => {
+    const f = e.dataTransfer.files[0]; if (!f) return;
+    f.text().then(t => loadCSVText(t, f.name));
+  });
+
+  // also allow drop anywhere on app
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => {
+    e.preventDefault();
+    if (document.getElementById('app').classList.contains('hidden')) return;
+    const f = e.dataTransfer.files[0]; if (!f) return;
+    f.text().then(t => loadCSVText(t, f.name));
+  });
+
+  document.getElementById('reloadBtn').addEventListener('click', () => fileInput.click());
+
+  // search
+  document.getElementById('searchInput').addEventListener('input', runSearch);
+
+  // filter chips
+  document.querySelectorAll('.chip').forEach(c => {
+    c.addEventListener('click', () => {
+      document.querySelectorAll('.chip').forEach(x => x.classList.remove('active'));
+      c.classList.add('active');
+      state.filter = c.getAttribute('data-filter');
+      runSearch();
+      applyHighlights();
+    });
+  });
+
+  // path
+  document.getElementById('pathBtn').addEventListener('click', tracePath);
+  document.getElementById('pathClearBtn').addEventListener('click', clearPath);
+  document.getElementById('pathFrom').addEventListener('keydown', e => { if (e.key === 'Enter') tracePath(); });
+  document.getElementById('pathTo').addEventListener('keydown', e => { if (e.key === 'Enter') tracePath(); });
+
+  // toolbar
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    svg.transition().duration(400).call(zoomBehavior.transform, d3.zoomIdentity);
+    if (simulation) simulation.alpha(0.6).restart();
+  });
+  document.getElementById('freezeBtn').addEventListener('click', (e) => {
+    state.frozen = !state.frozen;
+    e.target.classList.toggle('active', state.frozen);
+    if (state.frozen) {
+      state.nodes.forEach(n => { n.fx = n.x; n.fy = n.y; });
+      simulation?.stop();
+    } else {
+      state.nodes.forEach(n => { n.fx = null; n.fy = null; });
+      simulation?.alpha(0.3).restart();
+    }
+  });
+  document.getElementById('labelsBtn').addEventListener('click', (e) => {
+    state.showLabels = !state.showLabels;
+    e.target.classList.toggle('active', state.showLabels);
+    gNodes.selectAll('g.node text').style('display', state.showLabels ? null : 'none');
+  });
+
+  // resize
+  window.addEventListener('resize', () => {
+    if (!simulation) return;
+    const { width, height } = svg.node().getBoundingClientRect();
+    simulation.force('center', d3.forceCenter(width/2, height/2));
+    simulation.alpha(0.3).restart();
+  });
+}
+
+setupEvents();
+</script>
+</body>
+</html>
