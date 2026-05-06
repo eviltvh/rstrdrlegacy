@@ -7,7 +7,7 @@
 // Si querés forzar otro id como centro, ponelo aquí (string), si no, null.
 const SELF_OVERRIDE = null;
 const RING_BASE = 180;          // distancia del primer anillo (lvl 1)
-const RING_GROWTH = 1.0;        // 1.0 = anillos lineales; >1 = se expanden
+const RING_GROWTH = 5.0;        // 1.0 = anillos lineales; >1 = se expanden
 
 // ════════════════════════════════════════════════════════════
 //  STATE
