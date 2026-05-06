@@ -3,9 +3,11 @@
 // ════════════════════════════════════════════════════════════
 //  CONFIG
 // ════════════════════════════════════════════════════════════
-const SELF_ID = 'self';        // id del nodo "yo" en el csv (origen=self)
-const RING_BASE = 160;         // distancia del primer anillo
-const RING_GROWTH = 1.0;       // 1.0 = anillos equidistantes, >1 = se expanden
+// El self se detecta auto: el usuario cuyo origen literal es 'self'.
+// Si querés forzar otro id como centro, ponelo aquí (string), si no, null.
+const SELF_OVERRIDE = null;
+const RING_BASE = 180;          // distancia del primer anillo (lvl 1)
+const RING_GROWTH = 1.0;        // 1.0 = anillos lineales; >1 = se expanden
 
 // ════════════════════════════════════════════════════════════
 //  STATE
@@ -19,6 +21,7 @@ const state = {
   inAdj: new Map(),   // target -> origenes
   levels: new Map(),  // id -> nivel BFS desde self
   maxLevel: 0,
+  selfId: null,       // detectado del CSV (el que tiene origen='self')
   filter: 'all',
   selectedId: null,
   pathIds: new Set(),
@@ -78,9 +81,33 @@ function parseCSV(text) {
 
 // ════════════════════════════════════════════════════════════
 //  BUILD GRAPH
+//  Reglas:
+//   1. selfId = username cuyo origen === 'self' (case-insensitive)
+//   2. Para cada row:
+//      - si origen === 'self' → este user ES el self, sin edge
+//      - si origen es un username real → edge origen → user (jerarquía normal)
+//      - si origen es un ghost (solo aparece como origen) → edge origen → user
+//        Y ADEMÁS edge selfId → ghost (los ghosts cuelgan del self)
 // ════════════════════════════════════════════════════════════
+function findSelfId(rows) {
+  if (SELF_OVERRIDE) return SELF_OVERRIDE;
+  for (const row of rows) {
+    if ((row.origen || '').trim().toLowerCase() === 'self') {
+      const u = (row.username || '').trim();
+      if (u) return u;
+    }
+  }
+  return null;
+}
+
 function buildGraph(rows) {
   const nodeMap = new Map();
+  const selfId = findSelfId(rows);
+
+  // set de usernames reales (los que aparecen en la columna username)
+  const realUsernames = new Set(
+    rows.map(r => (r.username || '').trim()).filter(Boolean)
+  );
 
   const ensureNode = (id, isGhost = false) => {
     if (!id) return null;
@@ -89,7 +116,7 @@ function buildGraph(rows) {
         id,
         username: id,
         ghost: isGhost,
-        isSelf: id === SELF_ID,
+        isSelf: id === selfId,
         status: isGhost ? 'origin' : 'unknown',
         mutual: false,
         origen: '',
@@ -102,12 +129,14 @@ function buildGraph(rows) {
         days_active: '',
       });
     } else if (!isGhost) {
-      nodeMap.get(id).ghost = false;
+      const n = nodeMap.get(id);
+      n.ghost = false;
+      if (id === selfId) n.isSelf = true;
     }
     return nodeMap.get(id);
   };
 
-  const links = [];
+  // pase 1: nodos reales con sus datos
   rows.forEach(row => {
     const u = (row.username || '').trim();
     if (!u) return;
@@ -124,15 +153,32 @@ function buildGraph(rows) {
       stand_type: row.stand_type || '',
       days_active: row.days_active || '',
     });
+  });
 
-    const o = node.origen;
-    if (o && o.toLowerCase() !== 'unknown' && o !== u) {
-      ensureNode(o, true);
-      links.push({ source: o, target: u });
+  // pase 2: edges
+  const links = [];
+  rows.forEach(row => {
+    const u = (row.username || '').trim();
+    if (!u) return;
+    const o = (row.origen || '').trim();
+    if (!o) return;
+    if (o.toLowerCase() === 'self') return;     // este user ES el self
+    if (o.toLowerCase() === 'unknown') return;
+    if (o === u) return;
+
+    const isGhostOrigin = !realUsernames.has(o);
+    ensureNode(o, isGhostOrigin);
+
+    // edge origen → user
+    links.push({ source: o, target: u });
+
+    // ghost origins cuelgan del self
+    if (isGhostOrigin && selfId && o !== selfId) {
+      links.push({ source: selfId, target: o });
     }
   });
 
-  // dedupe
+  // dedupe edges
   const seen = new Set();
   const dedup = [];
   links.forEach(l => {
@@ -140,11 +186,11 @@ function buildGraph(rows) {
     if (!seen.has(k)) { seen.add(k); dedup.push(l); }
   });
 
-  return { nodes: Array.from(nodeMap.values()), links: dedup };
+  return { nodes: Array.from(nodeMap.values()), links: dedup, selfId };
 }
 
 // ════════════════════════════════════════════════════════════
-//  ADJACENCY + STATS
+//  ADJACENCY
 // ════════════════════════════════════════════════════════════
 function indexGraph(nodes, links) {
   const adj = new Map();
@@ -169,12 +215,12 @@ function indexGraph(nodes, links) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  BFS LEVELS DESDE SELF (self=0, origenes=1, derivados=2+)
+//  BFS LEVELS DESDE SELF
 // ════════════════════════════════════════════════════════════
 function computeLevels(adj, rootId) {
   const levels = new Map();
   let maxLevel = 0;
-  if (!adj.has(rootId)) return { levels, maxLevel };
+  if (!rootId || !adj.has(rootId)) return { levels, maxLevel };
   levels.set(rootId, 0);
   const queue = [rootId];
   while (queue.length) {
@@ -210,7 +256,7 @@ function connectedComponents(nodes, adj) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  BFS SHORTEST PATH (para connect)
+//  SHORTEST PATH
 // ════════════════════════════════════════════════════════════
 function shortestPath(adj, fromId, toId) {
   if (!adj.has(fromId) || !adj.has(toId)) return null;
@@ -241,7 +287,6 @@ function shortestPath(adj, fromId, toId) {
 // ════════════════════════════════════════════════════════════
 function levelRadius(level) {
   if (level == null || level === 0) return 0;
-  // anillos: lvl1 = RING_BASE, lvl2 = RING_BASE*2, ...
   return RING_BASE * Math.pow(RING_GROWTH, level - 1) * level;
 }
 
@@ -254,7 +299,6 @@ function initSvg() {
   svg = d3.select('#graph');
   svg.selectAll('*').remove();
 
-  // arrow markers
   const defs = svg.append('defs');
   const mkArrow = (id, color) => {
     defs.append('marker')
@@ -284,7 +328,7 @@ function initSvg() {
 
 function drawLevelRings(cx, cy) {
   gRings.selectAll('*').remove();
-  if (!state.levels.has(SELF_ID)) return;
+  if (!state.selfId || !state.levels.has(state.selfId)) return;
   for (let lvl = 1; lvl <= state.maxLevel; lvl++) {
     const r = levelRadius(lvl);
     gRings.append('circle')
@@ -321,7 +365,8 @@ function nodeRadius(d) {
 }
 
 function pinSelf() {
-  const selfNode = state.nodeMap.get(SELF_ID);
+  if (!state.selfId) return null;
+  const selfNode = state.nodeMap.get(state.selfId);
   if (!selfNode) return null;
   const { width, height } = svg.node().getBoundingClientRect();
   selfNode.fx = width / 2;
@@ -362,7 +407,7 @@ function render() {
     .attr('stroke-dasharray', d => (d.ghost && !d.isSelf) ? '2,2' : null);
   allNodes.select('text')
     .attr('dy', d => d.isSelf ? 32 : 18)
-    .text(d => d.isSelf ? 'SELF' : d.id)
+    .text(d => d.id)
     .style('display', state.showLabels ? null : 'none');
 
   allNodes
@@ -378,14 +423,11 @@ function render() {
       .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
       .on('end', (e, d) => {
         if (!e.active) simulation.alphaTarget(0);
-        // mantenemos pinned: el self siempre, y todos si está congelado
         if (!state.frozen && !d.isSelf) { d.fx = null; d.fy = null; }
       }));
 
   // ── SIMULATION ──
   if (simulation) simulation.stop();
-
-  const hasSelf = state.nodeMap.has(SELF_ID);
 
   simulation = d3.forceSimulation(state.nodes)
     .force('link', d3.forceLink(state.links).id(d => d.id)
@@ -393,15 +435,13 @@ function render() {
         const sLvl = state.levels.get(l.source.id ?? l.source);
         const tLvl = state.levels.get(l.target.id ?? l.target);
         if (sLvl == null || tLvl == null) return 80;
-        // longitud aprox = diferencia entre anillos
         return Math.max(40, Math.abs(levelRadius(tLvl) - levelRadius(sLvl)));
       })
       .strength(0.4))
     .force('charge', d3.forceManyBody().strength(d => d.isSelf ? -800 : -180))
     .force('collide', d3.forceCollide().radius(d => nodeRadius(d) + 6));
 
-  if (hasSelf) {
-    // anclar al centro y aplicar fuerza radial por nivel
+  if (state.selfId && state.nodeMap.has(state.selfId)) {
     simulation.force('radial', d3.forceRadial(
       d => {
         const lvl = state.levels.get(d.id);
@@ -414,7 +454,6 @@ function render() {
     }));
     pinSelf();
   } else {
-    // fallback al layout original force-directed
     simulation.force('center', d3.forceCenter(cx, cy));
   }
 
@@ -441,7 +480,6 @@ function applyHighlights() {
     let dim = false;
     let highlight = false;
 
-    // filter
     if (filter !== 'all') {
       if (filter === 'mutual' && !d.mutual) dim = true;
       else if (filter === 'active' && d.status !== 'active') dim = true;
@@ -509,9 +547,13 @@ function showTooltip(e, d) {
   const outDeg = state.outAdj.get(d.id)?.size || 0;
   const lvl = state.levels.get(d.id);
   const lvlStr = lvl != null ? `lvl ${lvl}` : 'unreachable';
+  const prefix = d.isSelf ? '◉ ' : '@';
+  const typeLabel = d.isSelf
+    ? '[ self · centro ]'
+    : (d.ghost ? '[ origin ghost ]' : (d.status || '—'));
   tooltipEl.innerHTML = `
-    <div class="tooltip-name">${d.isSelf ? '◉ SELF' : '@' + d.id}</div>
-    <div>${d.isSelf ? '[ centro / yo ]' : (d.ghost ? '[ origin only ]' : (d.status || '—'))}${d.mutual ? ' · mutual' : ''}</div>
+    <div class="tooltip-name">${prefix}${d.id}</div>
+    <div>${typeLabel}${d.mutual ? ' · mutual' : ''}</div>
     <div style="color:var(--muted);margin-top:2px;">in ${inDeg} · out ${outDeg} · ${lvlStr}</div>
   `;
   tooltipEl.classList.add('show');
@@ -545,14 +587,20 @@ function renderNodeInfo() {
   const outs = Array.from(state.outAdj.get(d.id) || []);
   const lvl = state.levels.get(d.id);
 
-  let html = `<div class="node-info-name ${d.isSelf ? 'is-self' : ''}">${d.isSelf ? 'SELF' : d.id}</div>`;
+  let html = `<div class="node-info-name ${d.isSelf ? 'is-self' : ''}">${d.id}</div>`;
   html += '<dl>';
+
   if (d.isSelf) {
-    html += `<dt>type</dt><dd class="pink">center / you</dd>`;
+    html += `<dt>type</dt><dd class="pink">◉ self · center</dd>`;
     html += `<dt>level</dt><dd class="accent">0</dd>`;
+    html += `<dt>status</dt><dd>${d.status||'—'}</dd>`;
+    if (d.profile_followers) html += `<dt>followers</dt><dd>${d.profile_followers}</dd>`;
+    if (d.profile_following) html += `<dt>following</dt><dd>${d.profile_following}</dd>`;
+    if (d.profile_ratio) html += `<dt>ratio</dt><dd>${d.profile_ratio}</dd>`;
+    if (d.stand_type) html += `<dt>stand</dt><dd>${d.stand_type}</dd>`;
     html += `<dt>spawned</dt><dd class="accent">${outs.length}</dd>`;
   } else if (d.ghost) {
-    html += `<dt>type</dt><dd class="accent">origin only</dd>`;
+    html += `<dt>type</dt><dd class="accent">origin ghost</dd>`;
     html += `<dt>level</dt><dd>${lvl != null ? lvl : '—'}</dd>`;
     html += `<dt>incoming</dt><dd>${ins.length}</dd>`;
     html += `<dt>spawned</dt><dd class="accent">${outs.length}</dd>`;
@@ -566,7 +614,7 @@ function renderNodeInfo() {
     if (d.profile_followers) html += `<dt>followers</dt><dd>${d.profile_followers}</dd>`;
     if (d.profile_following) html += `<dt>following</dt><dd>${d.profile_following}</dd>`;
     if (d.profile_ratio) html += `<dt>ratio</dt><dd>${d.profile_ratio}</dd>`;
-    if (d.stand_type) html += `<dt>type</dt><dd>${d.stand_type}</dd>`;
+    if (d.stand_type) html += `<dt>stand</dt><dd>${d.stand_type}</dd>`;
     html += `<dt>incoming</dt><dd>${ins.length}</dd>`;
     html += `<dt>outgoing</dt><dd class="accent">${outs.length}</dd>`;
   }
@@ -613,8 +661,9 @@ function runSearch() {
 
   box.innerHTML = matches.map(n => {
     const tag = n.isSelf ? 'self' : (n.ghost ? 'origin' : (n.mutual ? 'mutual' : (n.status||'—')));
+    const prefix = n.isSelf ? '◉' : '@';
     return `<div class="search-result" data-id="${n.id}">
-      <span>${n.isSelf ? '◉' : '@'}${n.id}</span><span class="badge">${tag}</span>
+      <span>${prefix}${n.id}</span><span class="badge">${tag}</span>
     </div>`;
   }).join('');
   box.querySelectorAll('.search-result').forEach(el => {
@@ -666,8 +715,10 @@ function tracePath() {
   const hops = path.length - 1;
   let html = `<div class="path-success">${hops} hop${hops!==1?'s':''} · ${path.length} nodes</div>`;
   path.forEach((id, i) => {
+    const n = state.nodeMap.get(id);
+    const prefix = n?.isSelf ? '◉ ' : '@';
     html += `<div class="path-step" data-id="${id}">
-      <span class="num">${String(i+1).padStart(2,'0')}</span><span>${id === SELF_ID ? '◉ SELF' : '@' + id}</span>
+      <span class="num">${String(i+1).padStart(2,'0')}</span><span>${prefix}${id}</span>
     </div>`;
     if (i < path.length - 1) {
       const a = path[i], b = path[i+1];
@@ -721,19 +772,19 @@ function loadCSVText(text, filename) {
       toast('CSV missing "username" column');
       return;
     }
-    const { nodes, links } = buildGraph(parsed.rows);
+    const { nodes, links, selfId } = buildGraph(parsed.rows);
     if (!nodes.length) { toast('no nodes parsed'); return; }
 
     state.nodes = nodes;
     state.links = links;
+    state.selfId = selfId;
     const idx = indexGraph(nodes, links);
     state.adj = idx.adj;
     state.outAdj = idx.outAdj;
     state.inAdj = idx.inAdj;
     state.nodeMap = idx.nodeMap;
 
-    // BFS desde self → niveles
-    const lvlRes = computeLevels(state.adj, SELF_ID);
+    const lvlRes = computeLevels(state.adj, selfId);
     state.levels = lvlRes.levels;
     state.maxLevel = lvlRes.maxLevel;
 
@@ -743,7 +794,9 @@ function loadCSVText(text, filename) {
 
     document.getElementById('emptyState').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
-    document.getElementById('metaFile').textContent = filename || 'csv loaded';
+    const fileLabel = filename || 'csv loaded';
+    document.getElementById('metaFile').textContent =
+      selfId ? `${fileLabel} · self: @${selfId}` : `${fileLabel} · no self detected`;
 
     initSvg();
     render();
@@ -751,8 +804,8 @@ function loadCSVText(text, filename) {
     renderNodeInfo();
     runSearch();
 
-    if (!state.nodeMap.has(SELF_ID)) {
-      toast(`no "${SELF_ID}" node found · using default layout`);
+    if (!selfId) {
+      toast('no user with origen=self · using default layout');
     }
 
     setTimeout(applyHighlights, 100);
@@ -844,21 +897,24 @@ function setupEvents() {
     e.target.classList.toggle('active', state.showLabels);
     gNodes.selectAll('g.node text').style('display', state.showLabels ? null : 'none');
   });
-  document.getElementById('recenterBtn').addEventListener('click', () => {
-    const selfNode = pinSelf();
-    if (!selfNode) { toast('no self node in graph'); return; }
-    const { width, height } = svg.node().getBoundingClientRect();
-    const k = 1;
-    const t = d3.zoomIdentity.translate(width/2 - selfNode.x*k, height/2 - selfNode.y*k).scale(k);
-    svg.transition().duration(500).call(zoomBehavior.transform, t);
-    simulation?.alpha(0.5).restart();
-  });
+  const recenterBtn = document.getElementById('recenterBtn');
+  if (recenterBtn) {
+    recenterBtn.addEventListener('click', () => {
+      const selfNode = pinSelf();
+      if (!selfNode) { toast('no self node in graph'); return; }
+      const { width, height } = svg.node().getBoundingClientRect();
+      const k = 1;
+      const t = d3.zoomIdentity.translate(width/2 - selfNode.x*k, height/2 - selfNode.y*k).scale(k);
+      svg.transition().duration(500).call(zoomBehavior.transform, t);
+      simulation?.alpha(0.5).restart();
+    });
+  }
 
   window.addEventListener('resize', () => {
     if (!simulation) return;
     const { width, height } = svg.node().getBoundingClientRect();
     drawLevelRings(width/2, height/2);
-    if (state.nodeMap.has(SELF_ID)) {
+    if (state.selfId && state.nodeMap.has(state.selfId)) {
       simulation.force('radial', d3.forceRadial(
         d => {
           const lvl = state.levels.get(d.id);
